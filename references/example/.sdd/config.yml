@@ -1,0 +1,4 @@
+schema_version: 1
+language: es
+max_concurrency: 3
+branch_prefix: "sdd/"
