@@ -2,7 +2,6 @@
 id: S002
 title: Botón de logout
 status: in-progress
-blocked: false
 type: feature
 priority: P2
 size: S

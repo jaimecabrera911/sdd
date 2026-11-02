@@ -26,12 +26,12 @@ orchestrator writes state.
 
 ## `sdd-builder` — one story
 
-- **Inputs:** story file path + spec excerpt, its own worktree/branch when >1 builder flies,
+- **Inputs:** story file path + spec excerpt (or quick micro-story), its own worktree/branch when >1 builder flies (or main tree in `sdd:quick`),
   the story's `touches` and AC list.
-- **Rules:** implement only this story; every AC gets its test (or the documented `manual:`
+- **Rules:** implement only this story using **Ponytail rules** (least code necessary, reuse existing helpers/std-library, no unasked abstractions, YAGNI); every AC gets its test or assert check (or the documented `manual:`
   evidence); commit as `sdd(<id>): <free text>` on `touches` files only — never `.sdd/`; stop
   and report if the story bundles two responsibilities or is oversized (hard rule 4).
-- **Report:** `VERDICT: ok|failed`, files changed, tests run + result, commit shas, blockers.
+- **Report:** `VERDICT: ok|failed`, files changed, tests run + result, commit shas, blockers, and **Ponytail sign-off** (what was skipped or not checked, and residual risks).
   On failure: proposed `review-note` reason.
 
 ## `sdd-reviewer` — verify one story

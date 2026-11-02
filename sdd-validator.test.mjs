@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, cpSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -19,7 +19,9 @@ function fixture(stories) {
   writeFileSync(join(sdd, 'config.yml'),
     'schema_version: 1\nlanguage: es\nmax_concurrency: 3\nbranch_prefix: "sdd/"\n');
   for (const [file, content] of Object.entries(stories)) {
-    writeFileSync(join(sdd, 'stories', file), content);
+    const status = /^status:\s*(\S+)/m.exec(content)?.[1]?.replace(/#.*$/, '') ?? 'backlog';
+    const namedFile = file.endsWith('.md') ? file.replace(/\.md$/, `(${status}).md`) : file;
+    writeFileSync(join(sdd, 'stories', namedFile), content);
   }
   return root;
 }
@@ -163,18 +165,27 @@ test('second AC heading cannot hide unchecked scenarios', () => {
   assert.ok(result.errors.some((e) => e.code === 'ac-test-ref'));
 });
 
-test('all current* sprint files are checked', () => {
+test('all named sprint files are checked', () => {
   const root = fixture({ 'S001-demo.md': featureStory('S001', esBody) });
-  writeFileSync(join(root, '.sdd', 'sprints', 'current.md'), '# Sprint\n- S001\n');
-  writeFileSync(join(root, '.sdd', 'sprints', 'current-alt.md'), '# Sprint alt\n- S999\n');
+  writeFileSync(join(root, '.sdd', 'sprints', 'S01-demo(in-progress).md'), '# Sprint\n- S001\n');
+  writeFileSync(join(root, '.sdd', 'sprints', 'S02-alt(planned).md'), '# Sprint alt\n- S999\n');
   const result = validateState(root);
   assert.equal(result.ok, false);
-  assert.ok(result.errors.some((e) => e.code === 'sprint-ref' && e.msg.includes('current-alt.md')));
+  assert.ok(result.errors.some((e) => e.code === 'sprint-ref' && e.msg.includes('S02-alt(planned).md')));
+});
+
+test('story filename state must match frontmatter state', () => {
+  const root = fixture({ 'S001-demo.md': featureStory('S001', esBody) });
+  const stories = join(root, '.sdd', 'stories');
+  const original = join(stories, 'S001-demo(backlog).md');
+  renameSync(original, join(stories, 'S001-demo(ready).md'));
+  const result = validateState(root);
+  assert.ok(result.errors.some((e) => e.code === 'filename-status'));
 });
 
 test('blocked without blocked-why is an error', () => {
   const root = fixture({
-    'S001-demo.md': featureStory('S001', esBody, 'blocked: true\n'),
+    'S001-demo.md': featureStory('S001', esBody).replace('status: backlog', 'status: blocked'),
   });
   const result = validateState(root);
   assert.equal(result.ok, false);
@@ -229,7 +240,7 @@ test('CLI validates correctly from a path containing spaces', () => {
   cpSync(root, join(base, 'proj'), { recursive: true });
   const res = spawnSync(process.execPath, [VALIDATOR, join(base, 'proj')], { encoding: 'utf8' });
   assert.equal(res.status, 0, res.stderr);
-  assert.match(res.stderr, /estado ok/);
+  assert.match(res.stderr, /state ok/);
 });
 
 test('validator messages follow config.language', () => {
@@ -278,7 +289,7 @@ test('sprint dep-order violation is reported', () => {
   const a = featureStory('S001', esBody);
   const b = featureStory('S002', esBody).replace('blocked-by: []', 'blocked-by: [S001]');
   const root = fixture({ 'S001-demo.md': a, 'S002-other.md': b });
-  writeFileSync(join(root, '.sdd', 'sprints', 'current.md'),
+  writeFileSync(join(root, '.sdd', 'sprints', 'S01-demo(in-progress).md'),
     '# Sprint\n## Gates\n- plan: ok\n\n1. S002\n2. S001\n');
   const result = validateState(root);
   assert.equal(result.ok, false);
@@ -289,7 +300,7 @@ test('sprint dep-order passes when dep is done or ordered earlier', () => {
   const a = featureStory('S001', esBody).replace('status: backlog', 'status: done');
   const b = featureStory('S002', esBody).replace('blocked-by: []', 'blocked-by: [S001]');
   const root = fixture({ 'S001-demo.md': a, 'S002-other.md': b });
-  writeFileSync(join(root, '.sdd', 'sprints', 'current.md'),
+  writeFileSync(join(root, '.sdd', 'sprints', 'S01-demo(in-progress).md'),
     '# Sprint\n## Gates\n- plan: ok\n\n1. S001\n2. S002\n');
   const result = validateState(root);
   assert.deepEqual(result.errors, []);
@@ -323,7 +334,7 @@ test('started set on a done story does not warn', () => {
 
 test('lowercase story id in the sprint is flagged, not ignored', () => {
   const root = fixture({ 'S001-demo.md': featureStory('S001', esBody) });
-  writeFileSync(join(root, '.sdd', 'sprints', 'current.md'),
+  writeFileSync(join(root, '.sdd', 'sprints', 'S01-demo(in-progress).md'),
     '# Sprint\n## Gates\n- plan: ok\n\n1. s001\n');
   const result = validateState(root);
   assert.equal(result.ok, false);
@@ -334,4 +345,44 @@ test('shipped worked example validates clean', () => {
   const result = validateState(fileURLToPath(new URL('references/example', import.meta.url)));
   assert.deepEqual(result.errors, []);
   assert.equal(result.ok, true);
+});
+
+test('valid quick micro-story in .sdd/quick passes validation', () => {
+  const root = fixture({ 'S001-demo.md': featureStory('S001', esBody) });
+  const quickDir = join(root, '.sdd', 'quick');
+  mkdirSync(quickDir, { recursive: true });
+  writeFileSync(join(quickDir, 'Q001-fix-bug.md'), `---
+id: Q001
+title: Fix bug
+status: done
+type: fix
+touches: [src/app.js]
+---
+## Objetivo
+Fix bug
+
+## Criterios de aceptación
+- [ ] Bug fixed (test: tests/bug.test.js)
+`);
+  const result = validateState(root);
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.ok, true);
+});
+
+test('malformed quick micro-story in .sdd/quick is flagged', () => {
+  const root = fixture({ 'S001-demo.md': featureStory('S001', esBody) });
+  const quickDir = join(root, '.sdd', 'quick');
+  mkdirSync(quickDir, { recursive: true });
+  writeFileSync(join(quickDir, 'bad-name.md'), `---
+id: Q001
+title: Fix bug
+status: invalid-status
+touches: []
+---
+`);
+  const result = validateState(root);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.code === 'quick-filename'));
+  assert.ok(result.errors.some((e) => e.code === 'quick-status'));
+  assert.ok(result.errors.some((e) => e.code === 'quick-missing-field'));
 });

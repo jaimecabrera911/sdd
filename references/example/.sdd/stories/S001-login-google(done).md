@@ -2,7 +2,6 @@
 id: S001
 title: Login con Google
 status: done
-blocked: false
 type: feature
 priority: P1
 size: M
